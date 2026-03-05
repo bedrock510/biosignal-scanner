@@ -1235,7 +1235,7 @@ export default function App() {
       setReportData(data);
       setScreen('report');
     } catch (err) {
-      alert('Analysis failed. Please ensure the backend is running at http://localhost:8000');
+      alert('Analysis failed. Please ensure the backend is running at https://cooperative-amazement-production-c886.up.railway.app');
       setScreen('upload');
     }
   };
