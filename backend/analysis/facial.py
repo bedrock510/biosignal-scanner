@@ -1,3 +1,7 @@
+import os
+os.environ["DISPLAY"] = ""
+os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "0"
+
 import cv2
 import numpy as np
 
