@@ -434,8 +434,275 @@ function WelcomeScreen({ onStart }) {
   );
 }
 
+// ─── Face Scanner Component ───────────────────────────────────────────────────
+function FaceScanner({ onCapture }) {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const animRef = useRef(null);
+  const [phase, setPhase] = useState('idle'); // idle | scanning | captured
+  const [progress, setProgress] = useState(0);
+  const [dots, setDots] = useState([]);
+  const [scanY, setScanY] = useState(0);
+  const [capturedImage, setCapturedImage] = useState(null);
+  const [faceDetected, setFaceDetected] = useState(false);
+  const progressRef = useRef(0);
+  const scanDirRef = useRef(1);
+
+  // Generate landmark dots for the face mesh overlay
+  const generateFaceDots = () => {
+    const d = [];
+    // Eye region dots
+    const leftEye = [{x:32,y:38},{x:36,y:36},{x:40,y:36},{x:44,y:38},{x:40,y:41},{x:36,y:41}];
+    const rightEye = [{x:56,y:38},{x:60,y:36},{x:64,y:36},{x:68,y:38},{x:64,y:41},{x:60,y:41}];
+    // Brow dots
+    const leftBrow = [{x:30,y:33},{x:36,y:31},{x:42,y:31},{x:46,y:33}];
+    const rightBrow = [{x:54,y:33},{x:58,y:31},{x:64,y:31},{x:70,y:33}];
+    // Nose dots
+    const nose = [{x:50,y:44},{x:47,y:50},{x:50,y:53},{x:53,y:50}];
+    // Mouth dots
+    const mouth = [{x:42,y:60},{x:47,y:58},{x:50,y:59},{x:53,y:58},{x:58,y:60},{x:53,y:64},{x:50,y:65},{x:47,y:64}];
+    // Jawline dots
+    const jaw = [{x:28,y:48},{x:27,y:55},{x:28,y:62},{x:32,y:70},{x:38,y:74},{x:50,y:76},{x:62,y:74},{x:68,y:70},{x:72,y:62},{x:73,y:55},{x:72,y:48}];
+    // Cheek dots
+    const cheeks = [{x:34,y:52},{x:66,y:52},{x:34,y:58},{x:66,y:58}];
+    [...leftEye,...rightEye,...leftBrow,...rightBrow,...nose,...mouth,...jaw,...cheeks].forEach((pt,i) => {
+      d.push({ x: pt.x, y: pt.y, delay: i * 80, visible: false });
+    });
+    setDots(d);
+  };
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, facingMode: 'user' } });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play();
+      }
+      setPhase('scanning');
+      generateFaceDots();
+      // Animate scan line and progress
+      let startTime = Date.now();
+      const scanDuration = 6000;
+      const animate = () => {
+        const elapsed = Date.now() - startTime;
+        const prog = Math.min(elapsed / scanDuration, 1);
+        progressRef.current = prog;
+        setProgress(Math.round(prog * 100));
+        setScanY(50 + Math.sin(elapsed / 400) * 35);
+        setFaceDetected(elapsed > 800);
+        // Reveal dots progressively
+        setDots(prev => prev.map((d, i) => ({
+          ...d, visible: elapsed > d.delay
+        })));
+        if (prog < 1) {
+          animRef.current = requestAnimationFrame(animate);
+        } else {
+          captureFrame();
+        }
+      };
+      animRef.current = requestAnimationFrame(animate);
+    } catch(e) {
+      alert('Camera access required for face scan. Please allow camera access or use photo upload instead.');
+    }
+  };
+
+  const captureFrame = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0);
+    canvas.toBlob(blob => {
+      const file = new File([blob], 'face-scan.jpg', { type: 'image/jpeg' });
+      setCapturedImage(URL.createObjectURL(blob));
+      setPhase('captured');
+      onCapture(file, URL.createObjectURL(blob));
+      // Stop camera
+      streamRef.current?.getTracks().forEach(t => t.stop());
+    }, 'image/jpeg', 0.95);
+  };
+
+  const retake = () => {
+    setCapturedImage(null);
+    setProgress(0);
+    setFaceDetected(false);
+    setDots([]);
+    setPhase('idle');
+    cancelAnimationFrame(animRef.current);
+    streamRef.current?.getTracks().forEach(t => t.stop());
+  };
+
+  const scannerSize = 280;
+
+  return (
+    <div style={{ textAlign: 'center' }}>
+      {phase === 'idle' && (
+        <div>
+          <div style={{
+            width: scannerSize, height: scannerSize, margin: '0 auto 20px',
+            border: '1px solid var(--border)', background: 'var(--off-white)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            position: 'relative', overflow: 'hidden',
+          }}>
+            {/* Corner brackets */}
+            {[['0','0','right','bottom'],['0','auto','left','bottom'],['auto','0','right','top'],['auto','auto','left','top']].map(([t,b,br,tl],i) => (
+              <div key={i} style={{
+                position:'absolute',
+                top: i < 2 ? 12 : 'auto', bottom: i >= 2 ? 12 : 'auto',
+                left: i % 2 === 0 ? 12 : 'auto', right: i % 2 === 1 ? 12 : 'auto',
+                width: 24, height: 24,
+                borderTop: i >= 2 ? `2px solid var(--gold)` : 'none',
+                borderBottom: i < 2 ? `2px solid var(--gold)` : 'none',
+                borderLeft: i % 2 === 0 ? `2px solid var(--gold)` : 'none',
+                borderRight: i % 2 === 1 ? `2px solid var(--gold)` : 'none',
+              }} />
+            ))}
+            <div style={{ fontSize: 48, color: 'var(--border)', marginBottom: 12 }}>◎</div>
+            <p style={{ fontSize: 11, color: 'var(--text-light)', fontWeight: 300, letterSpacing: '0.1em' }}>POSITION FACE HERE</p>
+          </div>
+          <button className="btn-gold" onClick={startCamera} style={{ fontSize: 11 }}>
+            Activate Scanner →
+          </button>
+        </div>
+      )}
+
+      {phase === 'scanning' && (
+        <div>
+          <div style={{
+            width: scannerSize, height: scannerSize, margin: '0 auto 16px',
+            position: 'relative', overflow: 'hidden', background: '#000',
+          }}>
+            {/* Live video */}
+            <video ref={videoRef} style={{
+              width: '100%', height: '100%', objectFit: 'cover',
+              transform: 'scaleX(-1)',
+            }} muted playsInline />
+
+            {/* Scan line */}
+            <div style={{
+              position: 'absolute', left: 0, right: 0,
+              top: `${scanY}%`, height: 1,
+              background: 'linear-gradient(90deg, transparent, var(--gold), transparent)',
+              opacity: 0.8,
+            }} />
+
+            {/* Face mesh dots overlay */}
+            <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} viewBox="0 0 100 100">
+              {faceDetected && dots.map((d, i) => (
+                <circle key={i} cx={d.x} cy={d.y} r="0.8"
+                  fill={d.visible ? 'var(--gold)' : 'transparent'}
+                  style={{ transition: 'fill 0.3s ease' }}
+                />
+              ))}
+              {/* Connection lines between key points when face detected */}
+              {faceDetected && progress > 30 && (
+                <g opacity="0.25" stroke="var(--gold)" strokeWidth="0.3" fill="none">
+                  <path d="M32,38 L36,36 L40,36 L44,38 L40,41 L36,41 Z" />
+                  <path d="M56,38 L60,36 L64,36 L68,38 L64,41 L60,41 Z" />
+                  <path d="M30,33 L36,31 L42,31 L46,33" />
+                  <path d="M54,33 L58,31 L64,31 L70,33" />
+                  <path d="M42,60 L47,58 L50,59 L53,58 L58,60 L53,64 L50,65 L47,64 Z" />
+                  <path d="M28,48 L27,55 L28,62 L32,70 L38,74 L50,76 L62,74 L68,70 L72,62 L73,55 L72,48" />
+                </g>
+              )}
+            </svg>
+
+            {/* Corner brackets */}
+            {[[0,0],[0,1],[1,0],[1,1]].map(([r,c],i) => (
+              <div key={i} style={{
+                position:'absolute',
+                top: r === 0 ? 8 : 'auto', bottom: r === 1 ? 8 : 'auto',
+                left: c === 0 ? 8 : 'auto', right: c === 1 ? 8 : 'auto',
+                width: 20, height: 20,
+                borderTop: r === 1 ? '2px solid var(--gold)' : 'none',
+                borderBottom: r === 0 ? '2px solid var(--gold)' : 'none',
+                borderLeft: c === 1 ? '2px solid var(--gold)' : 'none',
+                borderRight: c === 0 ? '2px solid var(--gold)' : 'none',
+              }} />
+            ))}
+
+            {/* Progress ring overlay */}
+            <svg style={{ position:'absolute', inset:0, width:'100%', height:'100%' }} viewBox="0 0 100 100">
+              <circle cx="50" cy="50" r="46" fill="none" stroke="rgba(184,154,106,0.15)" strokeWidth="0.5"/>
+              <circle cx="50" cy="50" r="46" fill="none" stroke="var(--gold)" strokeWidth="0.8"
+                strokeDasharray={`${progress * 2.89} 289`}
+                strokeLinecap="round"
+                transform="rotate(-90 50 50)"
+                style={{ transition: 'stroke-dasharray 0.1s linear' }}
+              />
+            </svg>
+
+            {/* Status text */}
+            <div style={{
+              position: 'absolute', bottom: 0, left: 0, right: 0,
+              padding: '6px 12px',
+              background: 'rgba(0,0,0,0.6)',
+            }}>
+              <p style={{ fontSize: 9, color: 'var(--gold)', fontWeight: 500, letterSpacing: '0.2em', margin: 0 }}>
+                {progress < 20 ? 'INITIALIZING SCAN...' :
+                 progress < 40 ? 'DETECTING FACE...' :
+                 progress < 60 ? 'MAPPING LANDMARKS...' :
+                 progress < 80 ? 'ANALYZING TENSION MARKERS...' :
+                 progress < 95 ? 'READING STRESS INDICATORS...' : 'SCAN COMPLETE'}
+              </p>
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div style={{ width: scannerSize, margin: '0 auto 12px' }}>
+            <div style={{ height: 2, background: 'var(--border)', borderRadius: 1 }}>
+              <div style={{
+                height: '100%', width: `${progress}%`,
+                background: 'linear-gradient(90deg, var(--gold-light), var(--gold))',
+                transition: 'width 0.1s linear', borderRadius: 1,
+              }} />
+            </div>
+            <p style={{ fontSize: 10, color: 'var(--gold)', marginTop: 6, letterSpacing: '0.15em', fontWeight: 500 }}>
+              {progress}% COMPLETE
+            </p>
+          </div>
+        </div>
+      )}
+
+      {phase === 'captured' && capturedImage && (
+        <div>
+          <div style={{
+            width: scannerSize, height: scannerSize, margin: '0 auto 12px',
+            position: 'relative', overflow: 'hidden',
+            border: '1px solid var(--gold)',
+          }}>
+            <img src={capturedImage} alt="scan" style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
+            {/* Success overlay */}
+            <div style={{
+              position: 'absolute', bottom: 0, left: 0, right: 0,
+              padding: '8px 12px', background: 'rgba(184,154,106,0.9)',
+            }}>
+              <p style={{ fontSize: 9, color: '#fff', fontWeight: 600, letterSpacing: '0.2em', margin: 0 }}>
+                ✓ SCAN CAPTURED
+              </p>
+            </div>
+          </div>
+          <button onClick={retake} style={{
+            background: 'none', border: 'none', fontSize: 11,
+            color: 'var(--text-light)', cursor: 'pointer', letterSpacing: '0.1em',
+            textDecoration: 'underline',
+          }}>
+            Retake scan
+          </button>
+        </div>
+      )}
+      <canvas ref={canvasRef} style={{ display: 'none' }} />
+    </div>
+  );
+}
+
 // ─── Upload Screen ────────────────────────────────────────────────────────────
 function UploadScreen({ onSubmit }) {
+  const [photoMode, setPhotoMode] = useState('upload'); // upload | scan
   const [photo, setPhoto] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
   const [audioFile, setAudioFile] = useState(null);
@@ -456,6 +723,11 @@ function UploadScreen({ onSubmit }) {
     if (!file) return;
     setPhoto(file);
     setPhotoPreview(URL.createObjectURL(file));
+  };
+
+  const handleScanCapture = (file, previewUrl) => {
+    setPhoto(file);
+    setPhotoPreview(previewUrl);
   };
 
   const handleAudioFile = (e) => {
@@ -508,27 +780,57 @@ function UploadScreen({ onSubmit }) {
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 40, fontWeight: 300, color: 'var(--text-dark)' }}>Upload Your Signals</h2>
           <div className="divider" />
           <p style={{ fontSize: 14, color: 'var(--text-light)', fontWeight: 300, maxWidth: 500, margin: '0 auto' }}>
-            A clear front-facing photo and a 20–30 second voice sample. Our system will do the rest.
+            A clear front-facing photo or live face scan, and a 20–30 second voice sample.
           </p>
         </div>
 
         <div className="grid-2" style={{ marginBottom: 32 }}>
-          {/* PHOTO */}
+          {/* PHOTO / SCAN */}
           <div className="card">
-            <p className="form-label">Face Photo</p>
-            <div className="upload-zone" style={{ minHeight: 180, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-              <input type="file" accept="image/jpeg,image/png,image/jpg" onChange={handlePhoto} />
-              {photoPreview ? (
-                <img src={photoPreview} alt="preview" style={{ maxHeight: 160, maxWidth: '100%', objectFit: 'contain' }} />
-              ) : (
-                <>
-                  <div style={{ fontSize: 32, marginBottom: 12, color: 'var(--mid-gray)' }}>◎</div>
-                  <p style={{ fontSize: 12, color: 'var(--text-light)', fontWeight: 300 }}>Click or drag photo here</p>
-                  <p style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 4 }}>JPG or PNG · Natural light · Front-facing</p>
-                </>
-              )}
+            <p className="form-label">Face Analysis</p>
+
+            {/* Mode toggle */}
+            <div className="tab-row" style={{ marginBottom: 16 }}>
+              <button
+                className={`tab-btn ${photoMode === 'upload' ? 'active' : ''}`}
+                onClick={() => { setPhotoMode('upload'); setPhoto(null); setPhotoPreview(null); }}
+              >
+                Upload Photo
+              </button>
+              <button
+                className={`tab-btn ${photoMode === 'scan' ? 'active' : ''}`}
+                onClick={() => { setPhotoMode('scan'); setPhoto(null); setPhotoPreview(null); }}
+              >
+                Live Face Scan
+              </button>
             </div>
-            {photo && <p style={{ fontSize: 11, color: 'var(--gold)', marginTop: 10, letterSpacing: '0.1em' }}>✓ {photo.name}</p>}
+
+            {photoMode === 'upload' ? (
+              <>
+                <div className="upload-zone" style={{ minHeight: 180, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                  <input type="file" accept="image/jpeg,image/png,image/jpg" onChange={handlePhoto} />
+                  {photoPreview ? (
+                    <img src={photoPreview} alt="preview" style={{ maxHeight: 160, maxWidth: '100%', objectFit: 'contain' }} />
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 32, marginBottom: 12, color: 'var(--mid-gray)' }}>◎</div>
+                      <p style={{ fontSize: 12, color: 'var(--text-light)', fontWeight: 300 }}>Click or drag photo here</p>
+                      <p style={{ fontSize: 10, color: 'var(--text-light)', marginTop: 4 }}>JPG or PNG · Natural light · Front-facing</p>
+                    </>
+                  )}
+                </div>
+                {photo && photoMode === 'upload' && (
+                  <p style={{ fontSize: 11, color: 'var(--gold)', marginTop: 10, letterSpacing: '0.1em' }}>✓ {photo.name}</p>
+                )}
+              </>
+            ) : (
+              <>
+                <FaceScanner onCapture={handleScanCapture} />
+                {photo && photoMode === 'scan' && (
+                  <p style={{ fontSize: 11, color: 'var(--gold)', marginTop: 10, letterSpacing: '0.1em', textAlign: 'center' }}>✓ Face scan captured</p>
+                )}
+              </>
+            )}
           </div>
 
           {/* AUDIO */}
@@ -620,11 +922,11 @@ function UploadScreen({ onSubmit }) {
 
         <div style={{ textAlign: 'center' }}>
           <button className="btn-primary" onClick={handleSubmit} disabled={!canSubmit} style={{ fontSize: 11 }}>
-            {canSubmit ? 'Analyze My BioSignals →' : 'Upload Photo + Audio to Continue'}
+            {canSubmit ? 'Analyze My BioSignals →' : 'Complete Photo + Audio to Continue'}
           </button>
           {!canSubmit && (
             <p style={{ fontSize: 11, color: 'var(--text-light)', marginTop: 12 }}>
-              {!photo ? '⚬ Photo required' : ''} {!audioFile ? '⚬ Audio required' : ''}
+              {!photo ? '⚬ Photo or scan required' : ''} {!audioFile ? '⚬ Audio required' : ''}
             </p>
           )}
         </div>
@@ -821,7 +1123,7 @@ function ReportScreen({ report, scores, flags }) {
 
           {/* Left — Signal Readings */}
           <div style={{ paddingRight: 56, paddingBottom: 80 }}>
-            <p style={{ fontSize: 9, fontWeight: 500, letterSpacing: '0.3em', textTransform: 'uppercase', color: 'var(--gold)', marginBottom: 32 }}>
+            <p style={{ fontSize: 9, fontWeight: 500, letterSpacing: "0.3em", textTransform: "uppercase", color: "var(--gold)", marginBottom: 32 }}>
               Signal Readings
             </p>
 
@@ -829,6 +1131,27 @@ function ReportScreen({ report, scores, flags }) {
               <ScoreRow key={key} label={label} value={scores[key]} description={description} />
             ))}
 
+            {/* CTA card sits naturally below scores */}
+            <div style={{
+              marginTop: 56, padding: "40px 36px",
+              background: "var(--off-white)", border: "1px solid var(--border)",
+            }}>
+              <p style={{
+                fontFamily: "var(--font-display)", fontSize: 32, fontWeight: 300,
+                color: "var(--text-dark)", lineHeight: 1.2, marginBottom: 12,
+              }}>
+                Ready to go<br /><em style={{ fontStyle: "italic", color: "var(--gold)" }}>deeper?</em>
+              </p>
+              <div style={{ width: 40, height: 1, background: "var(--gold)", margin: "16px 0" }} />
+              <p style={{ fontSize: 13, color: "var(--text-light)", fontWeight: 300, lineHeight: 1.8, marginBottom: 28 }}>
+                A White Glove Wellness® care coordinator can walk you through these findings and design a protocol around your specific patterns.
+              </p>
+              <a href="https://whiteglovewellness.com/contact-us/" target="_blank" rel="noopener noreferrer">
+                <button className="btn-gold" style={{ width: "100%", justifyContent: "center" }}>
+                  Speak with a Care Coordinator →
+                </button>
+              </a>
+            </div>
           </div>
 
           {/* Vertical divider */}
@@ -841,7 +1164,7 @@ function ReportScreen({ report, scores, flags }) {
             </p>
 
             {sections.length > 0 ? sections.map((section, i) => (
-              <div key={i} style={{ marginBottom: 36, position: 'relative' }}>
+              <div key={i} style={{ marginBottom: 36 }}>
                 {section.heading && !section.heading.toLowerCase().includes('disclaimer') && (
                   <p style={{
                     fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 400,
@@ -850,9 +1173,6 @@ function ReportScreen({ report, scores, flags }) {
                     {section.heading}
                   </p>
                 )}
-
-
-
                 {section.body.map((para, j) => (
                   !para.toLowerCase().includes('non-diagnostic') && (
                     <p key={j} style={{
@@ -878,19 +1198,6 @@ function ReportScreen({ report, scores, flags }) {
         <p style={{ fontSize: 11, color: 'var(--text-light)', fontStyle: 'italic', lineHeight: 1.8, maxWidth: 680, margin: '0 auto' }}>
           This report contains non-diagnostic wellness insights only and does not constitute medical advice. White Glove Wellness® services are wellness support — not FDA-approved treatments. Always consult a qualified healthcare provider for any health concerns.
         </p>
-      </div>
-
-      {/* CTA */}
-      <div className="cta-bar">
-        <p style={{ fontFamily: 'var(--font-display)', fontSize: 'clamp(24px, 4vw, 36px)', fontWeight: 300, marginBottom: 8 }}>
-          Ready to go deeper?
-        </p>
-        <p style={{ fontSize: 13, color: 'var(--text-light)', fontWeight: 300, marginBottom: 28, maxWidth: 420, margin: '0 auto 28px' }}>
-          A White Glove Wellness® care coordinator can walk you through these findings and design a protocol around your specific patterns.
-        </p>
-        <a href="https://whiteglovewellness.com/contact-us/" target="_blank" rel="noopener noreferrer">
-          <button className="btn-gold">Speak with a Care Coordinator →</button>
-        </a>
       </div>
     </div>
   );
