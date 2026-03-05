@@ -1,6 +1,6 @@
 import os
 os.environ["DISPLAY"] = ""
-os.environ["QT_QPA_PLATFORM"] = "offscreen"]
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
 os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "0"
 
 
