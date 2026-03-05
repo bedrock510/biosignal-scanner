@@ -8,19 +8,3 @@
     "restartPolicyType": "ON_FAILURE"
   }
 }
-```
-6. Save it
-
----
-
-**Then push to GitHub:**
-
-In the VS Code terminal run:
-```
-git add .
-```
-```
-git commit -m "add railway config"
-```
-```
-git push
